@@ -89,6 +89,29 @@ final class AppState {
         set { UserDefaults.standard.set(newValue, forKey: "historyLoggingEnabled") }
     }
 
+    // MARK: - LLM Cleanup Settings
+
+    var llmCleanupEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(llmCleanupEnabled, forKey: "llmCleanupEnabled") }
+    }
+
+    var llmCleanupModel: LLMModel = .haiku {
+        didSet { UserDefaults.standard.set(llmCleanupModel.rawValue, forKey: "llmCleanupModel") }
+    }
+
+    static let defaultLLMCleanupPrompt = ""
+
+    var llmCleanupPrompt: String = AppState.defaultLLMCleanupPrompt {
+        didSet { UserDefaults.standard.set(llmCleanupPrompt, forKey: "llmCleanupPrompt") }
+    }
+
+    var llmCleanupThinkingEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(llmCleanupThinkingEnabled, forKey: "llmCleanupThinkingEnabled") }
+    }
+
+    private(set) var transientWarning: String?
+    private var warningDismissTask: Task<Void, Never>?
+
     private static func loadSelectedModelVersion() -> AppModelVersion {
         // Migration: old "v2"/"v3" values map to new parakeet values
         let stored = UserDefaults.standard.string(forKey: "selectedModelVersion") ?? "parakeet_v2"
@@ -212,10 +235,15 @@ final class AppState {
         return history.first { $0.id == id }
     }
 
+    var totalLLMCleanupCost: Double {
+        history.compactMap(\.llmCleanupCost).reduce(0, +)
+    }
+
     let audioRecorder = AudioRecorder()
     let glossaryManager = GlossaryManager()
     private var transcriptionService: TranscriptionService?
     private var fnKeyRecordingService: FnKeyRecordingService?
+    private let llmCleanupService = LLMCleanupService()
 
     private var historyFileURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -233,7 +261,10 @@ final class AppState {
             "recordingStartSound": "Pop",
             "recordingStopSound": "None",
             "transcriptionCompleteSound": "Blow",
-            "historyLoggingEnabled": true
+            "historyLoggingEnabled": true,
+            "llmCleanupEnabled": false,
+            "llmCleanupPrompt": AppState.defaultLLMCleanupPrompt,
+            "llmCleanupThinkingEnabled": false
         ])
 
         // Load settings from UserDefaults
@@ -250,6 +281,15 @@ final class AppState {
 
         // Load appearance setting from UserDefaults
         frogeModeEnabled = UserDefaults.standard.bool(forKey: "frogeModeEnabled")
+
+        // Load LLM cleanup settings
+        llmCleanupEnabled = UserDefaults.standard.bool(forKey: "llmCleanupEnabled")
+        if let modelRaw = UserDefaults.standard.string(forKey: "llmCleanupModel"),
+           let model = LLMModel(rawValue: modelRaw) {
+            llmCleanupModel = model
+        }
+        llmCleanupPrompt = UserDefaults.standard.string(forKey: "llmCleanupPrompt") ?? AppState.defaultLLMCleanupPrompt
+        llmCleanupThinkingEnabled = UserDefaults.standard.bool(forKey: "llmCleanupThinkingEnabled")
 
         transcriptionService = TranscriptionService()
         loadHistory()
@@ -382,12 +422,22 @@ final class AppState {
                     self?.transcriptionProgress = progress
                 }
             } ?? ""
-            let processedText = glossaryManager.applyReplacements(to: text)
-            checkForEasterEgg(in: processedText)
-            let entry = TranscriptionEntry(text: processedText, sourceType: .recording)
+            let glossaryProcessedText = glossaryManager.applyReplacements(to: text)
+            checkForEasterEgg(in: glossaryProcessedText)
+
+            // Apply LLM cleanup if enabled
+            let (finalText, originalText, llmApplied, llmCost) = await performLLMCleanupIfEnabled(text: glossaryProcessedText)
+
+            let entry = TranscriptionEntry(
+                text: finalText,
+                sourceType: .recording,
+                originalText: originalText,
+                llmCleanupApplied: llmApplied,
+                llmCleanupCost: llmCost
+            )
             addEntry(entry)
             if autoCopyEnabled {
-                copyToClipboard(processedText)
+                copyToClipboard(finalText)
                 if autoPasteEnabled {
                     await AutoPasteService.performPaste()
                 }
@@ -396,7 +446,7 @@ final class AppState {
             }
             if let startTime = transcriptionStartTime,
                Date().timeIntervalSince(startTime) > 60 {
-                showTranscriptionCompleteNotification(text: processedText)
+                showTranscriptionCompleteNotification(text: finalText)
             }
             if soundsEnabled {
                 playSound(transcriptionCompleteSound)
@@ -424,16 +474,23 @@ final class AppState {
                     self?.transcriptionProgress = progress
                 }
             } ?? ""
-            let processedText = glossaryManager.applyReplacements(to: text)
-            checkForEasterEgg(in: processedText)
+            let glossaryProcessedText = glossaryManager.applyReplacements(to: text)
+            checkForEasterEgg(in: glossaryProcessedText)
+
+            // Apply LLM cleanup if enabled
+            let (finalText, originalText, llmApplied, llmCost) = await performLLMCleanupIfEnabled(text: glossaryProcessedText)
+
             let entry = TranscriptionEntry(
-                text: processedText,
+                text: finalText,
                 sourceType: .file,
-                sourceFileName: url.lastPathComponent
+                sourceFileName: url.lastPathComponent,
+                originalText: originalText,
+                llmCleanupApplied: llmApplied,
+                llmCleanupCost: llmCost
             )
             addEntry(entry)
             if autoCopyEnabled {
-                copyToClipboard(processedText)
+                copyToClipboard(finalText)
                 if autoPasteEnabled {
                     await AutoPasteService.performPaste()
                 }
@@ -442,7 +499,7 @@ final class AppState {
             }
             if let startTime = transcriptionStartTime,
                Date().timeIntervalSince(startTime) > 60 {
-                showTranscriptionCompleteNotification(text: processedText)
+                showTranscriptionCompleteNotification(text: finalText)
             }
             if soundsEnabled {
                 playSound(transcriptionCompleteSound)
@@ -507,6 +564,47 @@ final class AppState {
 
     func clearError() {
         errorMessage = nil
+    }
+
+    func showTransientWarning(_ message: String) {
+        transientWarning = message
+        warningDismissTask?.cancel()
+        warningDismissTask = Task {
+            try? await Task.sleep(for: .seconds(5))
+            if !Task.isCancelled {
+                transientWarning = nil
+            }
+        }
+    }
+
+    func clearTransientWarning() {
+        warningDismissTask?.cancel()
+        transientWarning = nil
+    }
+
+    private func performLLMCleanupIfEnabled(text: String) async -> (cleanedText: String, originalText: String?, llmApplied: Bool, cost: Double?) {
+        guard llmCleanupEnabled,
+              let apiKey = KeychainService.loadAnthropicAPIKey() else {
+            return (text, nil, false, nil)
+        }
+
+        let result = await llmCleanupService.cleanup(
+            text: text,
+            model: llmCleanupModel,
+            prompt: llmCleanupPrompt,
+            apiKey: apiKey,
+            thinkingEnabled: llmCleanupThinkingEnabled
+        )
+
+        if let warning = result.warning {
+            showTransientWarning(warning)
+        }
+
+        if result.usedOriginal {
+            return (text, nil, false, nil)
+        } else {
+            return (result.text, text, true, result.cost)
+        }
     }
 
     // MARK: - Fn Key Recording

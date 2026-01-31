@@ -33,9 +33,25 @@ struct FloatingRecordView: View {
                 Text("\(hotKeySettings.displayString) to toggle")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
+
+                if let warning = appState.transientWarning {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.yellow)
+                        Text(warning)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                    }
+                    .font(.system(size: 8))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .onTapGesture {
+                        appState.clearTransientWarning()
+                    }
+                }
             }
             .padding(12)
-            .frame(width: 120, height: 150)
+            .frame(width: 120)
 
             HStack {
                 Button {

@@ -20,8 +20,12 @@ struct SettingsView: View {
 
             GlossarySettingsView()
                 .tabItem { Label("Glossary", systemImage: "text.badge.plus") }
+
+            LLMSettingsView()
+                .tabItem { Label("AI Cleanup", systemImage: "sparkles") }
         }
-        .frame(width: 450, height: 400)
+        .tabViewStyle(.grouped)
+        .frame(width: 550, height: 450)
     }
 }
 
