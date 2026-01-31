@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Xcode user-specific data
+xcuserdata/
+*.xcuserdatad/
+
+# Build artifacts
+build/
+DerivedData/
+
+# Local packages (for temporary local development)
+LocalPackages/

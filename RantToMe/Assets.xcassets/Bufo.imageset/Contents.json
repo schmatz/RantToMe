@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "bufo.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
