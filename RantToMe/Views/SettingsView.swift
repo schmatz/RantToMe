@@ -55,6 +55,25 @@ struct GeneralSettingsView: View {
             Section {
                 Toggle("Save transcription history", isOn: historyLoggingBinding)
                 Toggle("Auto-copy to clipboard", isOn: autoCopyBinding)
+                if appState.autoCopyEnabled {
+                    Toggle("Auto-paste into active app", isOn: autoPasteBinding)
+                        .padding(.leading, 20)
+                    if appState.autoPasteEnabled && !AutoPasteService.checkAccessibilityPermission() {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.yellow)
+                            Text("Accessibility permission required")
+                                .font(.caption)
+                            Spacer()
+                            Button("Grant Access") {
+                                AutoPasteService.openAccessibilitySettings()
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                        }
+                        .padding(.leading, 20)
+                    }
+                }
                 HStack {
                     Button("Clear History...") {
                         showClearHistoryConfirmation = true
@@ -68,7 +87,7 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("Privacy")
             } footer: {
-                Text("When history is disabled, transcriptions are not saved locally. Enable at least one output option.")
+                Text("When history is disabled, transcriptions are not saved locally. Auto-paste requires Accessibility permission.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -77,10 +96,25 @@ struct GeneralSettingsView: View {
                 LabeledContent("Toggle Recording") {
                     HotKeyRecorderView()
                 }
+                Toggle("Hold Fn key to record", isOn: fnKeyRecordingBinding)
+                if appState.fnKeyRecordingEnabled && !FnKeyRecordingService.checkAccessibilityPermission() {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.yellow)
+                        Text("Accessibility permission required")
+                            .font(.caption)
+                        Spacer()
+                        Button("Grant Access") {
+                            FnKeyRecordingService.openAccessibilitySettings()
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                    }
+                }
             } header: {
                 Text("Global Hotkey")
             } footer: {
-                Text("Press this key combination anywhere to start or stop recording.")
+                Text("Press the hotkey to toggle recording, or hold Fn to record while pressed. Fn key requires Accessibility permission.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -159,6 +193,30 @@ struct GeneralSettingsView: View {
                 if !newValue && !appState.historyLoggingEnabled {
                     showNoOutputWarning = true
                 }
+            }
+        )
+    }
+
+    private var autoPasteBinding: Binding<Bool> {
+        Binding(
+            get: { appState.autoPasteEnabled },
+            set: { newValue in
+                if newValue && !AutoPasteService.checkAccessibilityPermission() {
+                    AutoPasteService.requestAccessibilityPermission()
+                }
+                appState.autoPasteEnabled = newValue
+            }
+        )
+    }
+
+    private var fnKeyRecordingBinding: Binding<Bool> {
+        Binding(
+            get: { appState.fnKeyRecordingEnabled },
+            set: { newValue in
+                if newValue && !FnKeyRecordingService.checkAccessibilityPermission() {
+                    FnKeyRecordingService.requestAccessibilityPermission()
+                }
+                appState.fnKeyRecordingEnabled = newValue
             }
         )
     }

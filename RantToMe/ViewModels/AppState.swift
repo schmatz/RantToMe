@@ -40,6 +40,17 @@ final class AppState {
         didSet { UserDefaults.standard.set(autoCopyEnabled, forKey: "autoCopyEnabled") }
     }
 
+    var autoPasteEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(autoPasteEnabled, forKey: "autoPasteEnabled") }
+    }
+
+    var fnKeyRecordingEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(fnKeyRecordingEnabled, forKey: "fnKeyRecordingEnabled")
+            updateFnKeyRecordingService()
+        }
+    }
+
     var soundsEnabled: Bool = true {
         didSet { UserDefaults.standard.set(soundsEnabled, forKey: "soundsEnabled") }
     }
@@ -204,6 +215,7 @@ final class AppState {
     let audioRecorder = AudioRecorder()
     let glossaryManager = GlossaryManager()
     private var transcriptionService: TranscriptionService?
+    private var fnKeyRecordingService: FnKeyRecordingService?
 
     private var historyFileURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -215,6 +227,8 @@ final class AppState {
     init() {
         UserDefaults.standard.register(defaults: [
             "autoCopyEnabled": true,
+            "autoPasteEnabled": false,
+            "fnKeyRecordingEnabled": false,
             "soundsEnabled": true,
             "recordingStartSound": "Pop",
             "recordingStopSound": "None",
@@ -224,6 +238,8 @@ final class AppState {
 
         // Load settings from UserDefaults
         autoCopyEnabled = UserDefaults.standard.bool(forKey: "autoCopyEnabled")
+        autoPasteEnabled = UserDefaults.standard.bool(forKey: "autoPasteEnabled")
+        fnKeyRecordingEnabled = UserDefaults.standard.bool(forKey: "fnKeyRecordingEnabled")
         soundsEnabled = UserDefaults.standard.bool(forKey: "soundsEnabled")
         recordingStartSound = UserDefaults.standard.string(forKey: "recordingStartSound") ?? "Pop"
         recordingStopSound = UserDefaults.standard.string(forKey: "recordingStopSound") ?? "None"
@@ -239,6 +255,7 @@ final class AppState {
         loadHistory()
         checkModelAvailability()
         requestNotificationPermission()
+        updateFnKeyRecordingService()
     }
 
     private func requestNotificationPermission() {
@@ -371,6 +388,9 @@ final class AppState {
             addEntry(entry)
             if autoCopyEnabled {
                 copyToClipboard(processedText)
+                if autoPasteEnabled {
+                    await AutoPasteService.performPaste()
+                }
             } else {
                 NotificationCenter.default.post(name: .openFullWindow, object: nil)
             }
@@ -414,6 +434,9 @@ final class AppState {
             addEntry(entry)
             if autoCopyEnabled {
                 copyToClipboard(processedText)
+                if autoPasteEnabled {
+                    await AutoPasteService.performPaste()
+                }
             } else {
                 NotificationCenter.default.post(name: .openFullWindow, object: nil)
             }
@@ -484,6 +507,39 @@ final class AppState {
 
     func clearError() {
         errorMessage = nil
+    }
+
+    // MARK: - Fn Key Recording
+
+    private func updateFnKeyRecordingService() {
+        if fnKeyRecordingEnabled {
+            if fnKeyRecordingService == nil {
+                fnKeyRecordingService = FnKeyRecordingService()
+            }
+            _ = fnKeyRecordingService?.start { [weak self] isPressed in
+                Task { @MainActor in
+                    self?.handleFnKeyStateChanged(isPressed: isPressed)
+                }
+            }
+        } else {
+            fnKeyRecordingService?.stop()
+            fnKeyRecordingService = nil
+        }
+    }
+
+    private func handleFnKeyStateChanged(isPressed: Bool) {
+        // Only respond if model is ready or currently recording
+        guard mode == .ready || mode == .recording else { return }
+
+        if isPressed && mode == .ready {
+            Task {
+                await startRecording()
+            }
+        } else if !isPressed && mode == .recording {
+            Task {
+                await stopRecordingAndTranscribe()
+            }
+        }
     }
 
     func clearCacheAndRestart() {
