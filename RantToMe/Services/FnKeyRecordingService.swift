@@ -51,8 +51,7 @@ final class FnKeyRecordingService {
             callback: { _, _, event, userInfo in
                 guard let userInfo = userInfo else { return Unmanaged.passUnretained(event) }
                 let service = Unmanaged<FnKeyRecordingService>.fromOpaque(userInfo).takeUnretainedValue()
-                service.handleEvent(event)
-                return Unmanaged.passUnretained(event)
+                return service.handleEvent(event)
             },
             userInfo: selfPointer
         ) else {
@@ -89,11 +88,15 @@ final class FnKeyRecordingService {
         isFnKeyDown = false
     }
 
-    private nonisolated func handleEvent(_ event: CGEvent) {
+    private nonisolated func handleEvent(_ event: CGEvent) -> Unmanaged<CGEvent>? {
         let flags = event.flags
 
         // Check if fn key is pressed (maskSecondaryFn)
         let fnKeyPressed = flags.contains(.maskSecondaryFn)
+
+        // Check if other modifiers are pressed (for Fn+key combos like Fn+Delete)
+        let otherModifiers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand]
+        let hasOtherModifiers = !flags.intersection(otherModifiers).isEmpty
 
         // Only notify on state change
         Task { @MainActor in
@@ -102,6 +105,14 @@ final class FnKeyRecordingService {
                 self.onFnKeyStateChanged?(fnKeyPressed)
             }
         }
+
+        // Consume Fn-only events to prevent emoji picker from opening.
+        // Let Fn+other modifier combinations pass through for system shortcuts.
+        if !hasOtherModifiers {
+            return nil
+        }
+
+        return Unmanaged.passUnretained(event)
     }
 
     deinit {
