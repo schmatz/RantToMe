@@ -5,7 +5,10 @@
 //  Created by Michael Schmatz on 1/16/26.
 //
 
+import os.log
 import SwiftUI
+
+private let logger = Logger(subsystem: "com.rantto.me", category: "RantToMeApp")
 
 @main
 struct RantToMeApp: App {
@@ -129,9 +132,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             keyCode: hotKeySettings.keyCode,
             modifiers: hotKeySettings.modifiers
         ) { [weak self] in
+            let callbackTime = CFAbsoluteTimeGetCurrent()
+            logger.info("⏱️ GlobalHotKey onToggle callback invoked")
             guard let self = self else { return }
             Task { @MainActor in
+                let taskStart = CFAbsoluteTimeGetCurrent()
+                logger.info("⏱️ GlobalHotKey Task started, delay from callback=\((taskStart - callbackTime) * 1000)ms")
                 await self.appState.toggleRecording()
+                logger.info("⏱️ GlobalHotKey toggleRecording() returned, total elapsed=\((CFAbsoluteTimeGetCurrent() - callbackTime) * 1000)ms")
             }
         }
 

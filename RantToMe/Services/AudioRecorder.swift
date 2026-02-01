@@ -5,6 +5,9 @@
 
 import AVFoundation
 import Foundation
+import os.log
+
+private let logger = Logger(subsystem: "com.rantto.me", category: "AudioRecorder")
 
 @MainActor
 @Observable
@@ -68,9 +71,20 @@ final class AudioRecorder: NSObject {
     }
 
     func stopRecording() -> URL? {
-        audioRecorder?.stop()
+        let stopStart = CFAbsoluteTimeGetCurrent()
+        logger.info("⏱️ AudioRecorder.stopRecording() START")
+
+        if let recorder = audioRecorder {
+            logger.info("⏱️ Calling AVAudioRecorder.stop()")
+            recorder.stop()
+            logger.info("⏱️ AVAudioRecorder.stop() returned, took \((CFAbsoluteTimeGetCurrent() - stopStart) * 1000)ms")
+        } else {
+            logger.warning("⏱️ audioRecorder was nil!")
+        }
+
         audioRecorder = nil
         isRecording = false
+        logger.info("⏱️ AudioRecorder.stopRecording() complete, total \((CFAbsoluteTimeGetCurrent() - stopStart) * 1000)ms")
         return recordingURL
     }
 

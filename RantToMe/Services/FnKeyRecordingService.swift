@@ -5,6 +5,9 @@
 
 import ApplicationServices
 import AppKit
+import os.log
+
+private let logger = Logger(subsystem: "com.rantto.me", category: "FnKeyRecording")
 
 @MainActor
 final class FnKeyRecordingService {
@@ -89,6 +92,7 @@ final class FnKeyRecordingService {
     }
 
     private nonisolated func handleEvent(_ event: CGEvent) -> Unmanaged<CGEvent>? {
+        let eventTime = CFAbsoluteTimeGetCurrent()
         let flags = event.flags
 
         // Check if fn key is pressed (maskSecondaryFn)
@@ -100,9 +104,14 @@ final class FnKeyRecordingService {
 
         // Only notify on state change
         Task { @MainActor in
+            let taskStart = CFAbsoluteTimeGetCurrent()
+            logger.info("⏱️ FnKey event tap Task started, fnKeyPressed=\(fnKeyPressed), delay from event=\((taskStart - eventTime) * 1000)ms")
+
             if fnKeyPressed != self.isFnKeyDown {
                 self.isFnKeyDown = fnKeyPressed
+                logger.info("⏱️ FnKey state changed, calling onFnKeyStateChanged")
                 self.onFnKeyStateChanged?(fnKeyPressed)
+                logger.info("⏱️ FnKey onFnKeyStateChanged returned, elapsed=\((CFAbsoluteTimeGetCurrent() - taskStart) * 1000)ms")
             }
         }
 

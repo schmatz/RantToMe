@@ -7,6 +7,9 @@
 
 import Carbon
 import AppKit
+import os.log
+
+private let logger = Logger(subsystem: "com.rantto.me", category: "GlobalHotKey")
 
 class GlobalHotKeyManager {
     private var hotKeyRef: EventHotKeyRef?
@@ -63,7 +66,9 @@ class GlobalHotKeyManager {
     }
 
     func triggerToggle() {
+        logger.info("⏱️ GlobalHotKey triggerToggle() called (on main queue)")
         onToggle()
+        logger.info("⏱️ GlobalHotKey onToggle() returned")
     }
 
     deinit {
@@ -87,9 +92,13 @@ private func fourCharCode(_ string: String) -> OSType {
 private func hotKeyHandler(nextHandler: EventHandlerCallRef?,
                            event: EventRef?,
                            userData: UnsafeMutableRawPointer?) -> OSStatus {
+    let eventTime = CFAbsoluteTimeGetCurrent()
+    logger.info("⏱️ GlobalHotKey Carbon callback fired")
     guard let userData = userData else { return noErr }
     let manager = Unmanaged<GlobalHotKeyManager>.fromOpaque(userData).takeUnretainedValue()
     DispatchQueue.main.async {
+        let dispatchTime = CFAbsoluteTimeGetCurrent()
+        logger.info("⏱️ GlobalHotKey DispatchQueue.main.async executed, delay=\((dispatchTime - eventTime) * 1000)ms")
         manager.triggerToggle()
     }
     return noErr

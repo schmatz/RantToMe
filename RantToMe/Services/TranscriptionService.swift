@@ -7,7 +7,10 @@ import AVFoundation
 import CoreML
 import FluidAudio
 import Foundation
+import os.log
 import WhisperKit
+
+private let logger = Logger(subsystem: "com.rantto.me", category: "Transcription")
 
 enum AppModelVersion: String, CaseIterable {
     case parakeetV2 = "parakeet_v2"  // English-only, higher recall, fastest
@@ -174,29 +177,49 @@ final class TranscriptionService {
     }
 
     func transcribe(audioURL: URL, onProgress: @escaping (Double) -> Void) async throws -> String {
+        let transcribeStart = CFAbsoluteTimeGetCurrent()
+        logger.info("⏱️ TranscriptionService.transcribe() START")
+
         guard let version = loadedModelVersion else {
             throw TranscriptionError.modelNotLoaded
         }
 
+        logger.info("⏱️ Using model version: \(version.rawValue)")
+
+        let result: String
         if version.isParakeet {
-            return try await transcribeWithParakeet(audioURL: audioURL, onProgress: onProgress)
+            result = try await transcribeWithParakeet(audioURL: audioURL, onProgress: onProgress)
         } else {
-            return try await transcribeWithWhisper(audioURL: audioURL, onProgress: onProgress)
+            result = try await transcribeWithWhisper(audioURL: audioURL, onProgress: onProgress)
         }
+
+        logger.info("⏱️ TranscriptionService.transcribe() COMPLETE, total=\((CFAbsoluteTimeGetCurrent() - transcribeStart) * 1000)ms")
+        return result
     }
 
     private func transcribeWithParakeet(audioURL: URL, onProgress: @escaping (Double) -> Void) async throws -> String {
+        let funcStart = CFAbsoluteTimeGetCurrent()
+        logger.info("⏱️ transcribeWithParakeet() START")
+
         guard let asrManager = asrManager else {
             throw TranscriptionError.modelNotLoaded
         }
 
         onProgress(0.1)
+        logger.info("⏱️ Calling asrManager.transcribe() - this uses ANE")
+        let aneStart = CFAbsoluteTimeGetCurrent()
         let result = try await asrManager.transcribe(audioURL, source: .system)
+        logger.info("⏱️ asrManager.transcribe() returned, ANE time=\((CFAbsoluteTimeGetCurrent() - aneStart) * 1000)ms")
+
         onProgress(1.0)
+        logger.info("⏱️ transcribeWithParakeet() COMPLETE, total=\((CFAbsoluteTimeGetCurrent() - funcStart) * 1000)ms")
         return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func transcribeWithWhisper(audioURL: URL, onProgress: @escaping (Double) -> Void) async throws -> String {
+        let funcStart = CFAbsoluteTimeGetCurrent()
+        logger.info("⏱️ transcribeWithWhisper() START")
+
         guard let whisperKit = whisperKit else {
             throw TranscriptionError.modelNotLoaded
         }
@@ -211,10 +234,15 @@ final class TranscriptionService {
 
         defer { progressTask.cancel() }
 
+        logger.info("⏱️ Calling whisperKit.transcribe() - this uses ANE")
+        let aneStart = CFAbsoluteTimeGetCurrent()
         let results = try await whisperKit.transcribe(audioPath: audioURL.path)
+        logger.info("⏱️ whisperKit.transcribe() returned, ANE time=\((CFAbsoluteTimeGetCurrent() - aneStart) * 1000)ms")
+
         onProgress(1.0)
 
         let text = results.map { $0.text }.joined(separator: " ")
+        logger.info("⏱️ transcribeWithWhisper() COMPLETE, total=\((CFAbsoluteTimeGetCurrent() - funcStart) * 1000)ms")
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

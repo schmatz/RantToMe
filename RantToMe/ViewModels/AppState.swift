@@ -5,7 +5,10 @@
 
 import AppKit
 import Foundation
+import os.log
 import UserNotifications
+
+private let logger = Logger(subsystem: "com.rantto.me", category: "AppState")
 
 extension Notification.Name {
     static let openFullWindow = Notification.Name("openFullWindow")
@@ -367,14 +370,24 @@ final class AppState {
     }
 
     func toggleRecording() async {
+        let toggleStart = CFAbsoluteTimeGetCurrent()
+        let screenCount = NSScreen.screens.count
+        let mainScreenFrame = NSScreen.main?.frame ?? .zero
+        logger.info("⏱️ toggleRecording() called, mode=\(String(describing: self.mode)), isRecording=\(self.audioRecorder.isRecording), screens=\(screenCount), mainScreen=\(mainScreenFrame.width)x\(mainScreenFrame.height)")
+
         // Ignore hotkey if model isn't ready
-        guard mode == .ready || mode == .recording else { return }
+        guard mode == .ready || mode == .recording else {
+            logger.info("⏱️ toggleRecording() ignored - mode not ready/recording")
+            return
+        }
 
         if audioRecorder.isRecording {
+            logger.info("⏱️ toggleRecording() calling stopRecordingAndTranscribe, elapsed=\((CFAbsoluteTimeGetCurrent() - toggleStart) * 1000)ms")
             await stopRecordingAndTranscribe()
         } else {
             await startRecording()
         }
+        logger.info("⏱️ toggleRecording() complete, total elapsed=\((CFAbsoluteTimeGetCurrent() - toggleStart) * 1000)ms")
     }
 
     private func startRecording() async {
@@ -398,30 +411,49 @@ final class AppState {
     }
 
     private func stopRecordingAndTranscribe() async {
+        let funcStart = CFAbsoluteTimeGetCurrent()
+        logger.info("⏱️ stopRecordingAndTranscribe() START")
+
         // Ensure at least 1 second of recording to satisfy ASR minimum requirements
         if let startTime = recordingStartTime {
             let elapsed = Date().timeIntervalSince(startTime)
             let minimumDuration: TimeInterval = 1.0
             if elapsed < minimumDuration {
-                try? await Task.sleep(for: .seconds(minimumDuration - elapsed))
+                let sleepTime = minimumDuration - elapsed
+                logger.info("⏱️ Sleeping for minimum duration: \(sleepTime)s")
+                try? await Task.sleep(for: .seconds(sleepTime))
+                logger.info("⏱️ Sleep complete, elapsed=\((CFAbsoluteTimeGetCurrent() - funcStart) * 1000)ms")
             }
         }
 
-        guard let url = audioRecorder.stopRecording() else { return }
+        logger.info("⏱️ Calling audioRecorder.stopRecording(), elapsed=\((CFAbsoluteTimeGetCurrent() - funcStart) * 1000)ms")
+        let stopStart = CFAbsoluteTimeGetCurrent()
+        guard let url = audioRecorder.stopRecording() else {
+            logger.error("⏱️ audioRecorder.stopRecording() returned nil!")
+            return
+        }
+        logger.info("⏱️ audioRecorder.stopRecording() took \((CFAbsoluteTimeGetCurrent() - stopStart) * 1000)ms")
+
         recordingStartTime = nil
+        logger.info("⏱️ Setting mode = .transcribing, elapsed=\((CFAbsoluteTimeGetCurrent() - funcStart) * 1000)ms")
         mode = .transcribing
+        logger.info("⏱️ Mode set to .transcribing, elapsed=\((CFAbsoluteTimeGetCurrent() - funcStart) * 1000)ms")
+
         if soundsEnabled {
             playSound(recordingStopSound)
         }
         transcriptionProgress = 0
         transcriptionStartTime = Date()
 
+        logger.info("⏱️ Starting transcription, elapsed=\((CFAbsoluteTimeGetCurrent() - funcStart) * 1000)ms")
         do {
+            let transcribeStart = CFAbsoluteTimeGetCurrent()
             let text = try await transcriptionService?.transcribe(audioURL: url) { [weak self] progress in
                 Task { @MainActor in
                     self?.transcriptionProgress = progress
                 }
             } ?? ""
+            logger.info("⏱️ Transcription complete, took \((CFAbsoluteTimeGetCurrent() - transcribeStart) * 1000)ms")
             let glossaryProcessedText = glossaryManager.applyReplacements(to: text)
             checkForEasterEgg(in: glossaryProcessedText)
 
@@ -614,10 +646,10 @@ final class AppState {
             if fnKeyRecordingService == nil {
                 fnKeyRecordingService = FnKeyRecordingService()
             }
+            // The callback is invoked from within a Task { @MainActor in } in FnKeyRecordingService,
+            // so we're already on the MainActor when this closure runs.
             _ = fnKeyRecordingService?.start { [weak self] isPressed in
-                Task { @MainActor in
-                    self?.handleFnKeyStateChanged(isPressed: isPressed)
-                }
+                self?.handleFnKeyStateChanged(isPressed: isPressed)
             }
         } else {
             fnKeyRecordingService?.stop()
@@ -626,17 +658,29 @@ final class AppState {
     }
 
     private func handleFnKeyStateChanged(isPressed: Bool) {
-        // Only respond if model is ready or currently recording
-        guard mode == .ready || mode == .recording else { return }
+        let callbackTime = CFAbsoluteTimeGetCurrent()
+        let screenCount = NSScreen.screens.count
+        logger.info("⏱️ handleFnKeyStateChanged(isPressed=\(isPressed)) called, mode=\(String(describing: self.mode)), screens=\(screenCount)")
 
-        if isPressed && mode == .ready {
-            Task {
+        // Only respond if model is ready or currently recording
+        guard mode == .ready || mode == .recording else {
+            logger.info("⏱️ handleFnKeyStateChanged ignored - mode not ready/recording")
+            return
+        }
+
+        // Use a single Task for both operations to reduce async hop overhead.
+        // This matches how toggleRecording() works for the global hotkey path.
+        Task {
+            let taskStart = CFAbsoluteTimeGetCurrent()
+            logger.info("⏱️ handleFnKeyStateChanged Task started, delay from callback=\((taskStart - callbackTime) * 1000)ms")
+
+            if isPressed && mode == .ready {
                 await startRecording()
-            }
-        } else if !isPressed && mode == .recording {
-            Task {
+            } else if !isPressed && mode == .recording {
+                logger.info("⏱️ handleFnKeyStateChanged calling stopRecordingAndTranscribe")
                 await stopRecordingAndTranscribe()
             }
+            logger.info("⏱️ handleFnKeyStateChanged Task complete, total elapsed=\((CFAbsoluteTimeGetCurrent() - callbackTime) * 1000)ms")
         }
     }
 
